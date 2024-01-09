@@ -1,0 +1,14 @@
+[package]
+name = "c8"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arrayvec = "0.7.4"
+rand = "0.8.5"
+sdl2 = "0.36.0"
+
+[features]
+# Use the shift operation used in the CHIP-48 and SUPER-CHIP in the 1990s 
+# instead of the original implementation in the COSMAC VIP CHIP-8 interpreter.
+shift-1990s = []
