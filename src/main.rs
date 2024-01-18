@@ -2,59 +2,40 @@
 #![warn(rust_2018_idioms, clippy::pedantic, clippy::nursery)]
 
 mod cpu;
+mod display;
 
 use cpu::Cpu;
-use sdl2::{event::Event, keyboard::Keycode, pixels::Color};
-use std::{env, error::Error, fs::File, io::Read, path::Path};
+use display::*;
+use std::{env, error::Error, fs::File, io::Read};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
+    // let step = args.contains(&String::from("--step"));
     let rom = args.get(0).expect("expected CHIP-8 ROM file");
-
-    let mut cpu = Cpu::new();
-
-    // Read the program instructions into a buffer.
-    let mut rom = File::open(Path::new("roms").join(rom))?;
-    let mut prog = Vec::new();
-    rom.read_to_end(&mut prog)?;
-
-    // Load the program into memory.
-    cpu.load_program(&prog);
 
     // Setup the sdl2 graphics.
     let sdl_context = sdl2::init()?;
-    let video_subsystem = sdl_context.video()?;
-    let window = video_subsystem
-        .window("C8: CHIP-8 Emulator", 500, 250)
+    let window = sdl_context
+        .video()?
+        .window("C8: CHIP-8 Emulator", WIDTH * SCALE, HEIGHT * SCALE)
         .position_centered()
+        .resizable()
         .build()?;
-    let mut canvas = window.into_canvas().build()?;
-    let mut event_pump = sdl_context.event_pump()?;
+    let canvas = window.into_canvas().build()?;
+    let display = Display::new(canvas);
+    let event_pump = sdl_context.event_pump()?;
 
-    canvas.clear();
-    canvas.set_draw_color(Color::WHITE);
-    canvas.present();
+    let mut cpu = Cpu::new(display, event_pump);
 
-    'exec: loop {
-        // canvas.draw_rect(sdl2::rect::Rect::new(50, 50, 25, 25))?;
+    // Read the program instructions into a buffer.
+    let mut rom = File::open(rom)?;
+    let mut prog = Vec::new();
+    rom.read_to_end(&mut prog)?;
 
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => break 'exec,
-                _ => {}
-            }
-        }
+    // Execute the program.
+    cpu.execute_program(&prog);
 
-        let inst = cpu.next_inst();
-        cpu.execute_instruction(inst, &mut canvas);
-
-        canvas.present();
-    }
-
+    // Dump post-execution state.
     cpu.dump_state();
 
     Ok(())

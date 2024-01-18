@@ -9,6 +9,19 @@ rand = "0.8.5"
 sdl2 = "0.36.0"
 
 [features]
-# Use the shift operation used in the CHIP-48 and SUPER-CHIP in the 1990s 
-# instead of the original implementation in the COSMAC VIP CHIP-8 interpreter.
-shift-1990s = []
+default = ["modern-ls"]
+
+# Use the "modern" implementation of the shift instructions used
+# in the CHIP-48 and SUPER-CHIP.
+modern-shift = []
+
+# Use the "modern" Jump With Offset implementation used in the
+# CHIP-48 and SUPER-CHIP.
+modern-jwo = []
+
+# Use the "modern" implementations of the load and store instructions
+# used in the CHIP-48 and SUPER-CHIP.
+modern-ls = []
+
+# Use the "modern" implementations of ambiguous instructions.
+modern = ["modern-shift", "modern-jwo", "modern-ls"]

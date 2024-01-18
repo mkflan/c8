@@ -1,5 +1,6 @@
+use crate::display::Display;
 use arrayvec::ArrayVec;
-use sdl2::render::WindowCanvas;
+use sdl2::{event::Event, keyboard::Keycode, EventPump};
 
 /// The commonly used font.
 const FONT: &[u8] = &[
@@ -27,10 +28,13 @@ const FONT_START: usize = 0x050;
 /// The memory address at which programs start.
 const PROG_START: usize = 0x200;
 
+/// The size of memory in bytes.
+const MEM_SIZE: usize = 0x1000;
+
 /// CPU state.
 pub struct Cpu {
     /// Accessible memory (4096 bytes).
-    mem: [u8; 4096],
+    mem: [u8; MEM_SIZE],
 
     /// Program counter.
     pc: u16,
@@ -49,11 +53,20 @@ pub struct Cpu {
 
     /// The sound timer register.
     str: u8,
+
+    /// The display.
+    display: Display,
+
+    /// The SDL event pump.
+    event_pump: EventPump,
+
+    /// A flag controlling whether the display should be rerendered after an instruction.
+    rerender: bool,
 }
 
 impl Cpu {
     /// Create a new CPU initialized with default values.
-    pub fn new() -> Self {
+    pub fn new(display: Display, event_pump: EventPump) -> Self {
         Self {
             mem: std::array::from_fn(|_| 0),
             pc: 0,
@@ -62,6 +75,9 @@ impl Cpu {
             stack: ArrayVec::new(),
             dtr: 0,
             str: 0,
+            display,
+            event_pump,
+            rerender: false,
         }
     }
 
@@ -103,12 +119,17 @@ impl Cpu {
         self.pc = self.stack.pop().expect("no return address");
     }
 
+    /// Skip the next instruction if the given condition is true.
+    fn skip_inst_if(&mut self, cond: bool) {
+        cond.then(|| self.pc += 2);
+    }
+
     /// Implementation of the shift right instruction.
     fn inst_shiftr(&mut self, regx: usize, regy: usize) {
         let regx_val = self.get_reg(regx);
         let regy_val = self.get_reg(regy);
 
-        if cfg!(feature = "shift-1990s") {
+        if cfg!(feature = "modern-shift") {
             let lsb = regx_val & 1;
             self.set_reg(regx, regx_val >> 1);
             *self.gpvr.last_mut().unwrap() = lsb;
@@ -125,7 +146,7 @@ impl Cpu {
         let regx_val = self.get_reg(regx);
         let regy_val = self.get_reg(regy);
 
-        if cfg!(feature = "shift-1990s") {
+        if cfg!(feature = "modern-shift") {
             let msb = regx_val >> 7;
             self.set_reg(regx, regx_val << 1);
             *self.gpvr.last_mut().unwrap() = msb;
@@ -138,14 +159,14 @@ impl Cpu {
     }
 
     /// Fetch the next instruction.
-    pub fn next_inst(&mut self) -> u16 {
+    fn next_inst(&mut self) -> u16 {
         let inst = self.read_word(self.pc as usize);
         self.pc += 2;
         inst
     }
 
     /// Load a program into memory and prepare for execution.
-    pub fn load_program(&mut self, prog: &[u8]) {
+    fn load_program(&mut self, prog: &[u8]) {
         // Load the font into memory.
         for (idx, &byte) in FONT.iter().enumerate() {
             self.mem[FONT_START + idx] = byte;
@@ -160,8 +181,11 @@ impl Cpu {
     }
 
     /// Decode and execute an instruction.
-    pub fn execute_instruction(&mut self, inst: u16, canvas: &mut WindowCanvas) {
-        // println!("inst: {:#X}", inst);
+    fn execute_instruction(&mut self, inst: u16) {
+        self.rerender = false;
+
+        println!("inst: {:#X}", inst);
+        println!("PC: {:#X}", self.pc);
 
         // The highest nibble encodes the kind of instruction to be executed.
         let highest_nibble = inst >> 12;
@@ -185,7 +209,10 @@ impl Cpu {
             0x0 => {
                 match remaining_nibbles {
                     // Clear the screen.
-                    0x0E0 => canvas.clear(),
+                    0x0E0 => {
+                        self.display.clear();
+                        self.rerender = true;
+                    }
 
                     // Return from subroutine.
                     0x0EE => {
@@ -202,21 +229,11 @@ impl Cpu {
                 self.push_stack();
                 self.pc = remaining_nibbles;
             }
-            0x3 => {
-                if self.gpvr[second_nibble as usize] == lsb as u8 {
-                    self.pc += 2;
-                }
-            }
-            0x4 => {
-                if self.gpvr[second_nibble as usize] != lsb as u8 {
-                    self.pc += 2;
-                }
-            }
-            0x5 => {
-                if self.gpvr[second_nibble as usize] == self.gpvr[third_nibble as usize] {
-                    self.pc += 2;
-                }
-            }
+            0x3 => self.skip_inst_if(self.gpvr[second_nibble as usize] == lsb as u8),
+            0x4 => self.skip_inst_if(self.gpvr[second_nibble as usize] != lsb as u8),
+            0x5 => self.skip_inst_if(
+                self.gpvr[second_nibble as usize] == self.gpvr[third_nibble as usize],
+            ),
             0x6 => {
                 self.gpvr[second_nibble as usize] = lsb as u8;
             }
@@ -277,25 +294,60 @@ impl Cpu {
                     _ => {}
                 }
             }
-            0x9 => {
-                if self.gpvr[second_nibble as usize] != self.gpvr[third_nibble as usize] {
-                    self.pc += 2;
+            0x9 => self.skip_inst_if(
+                self.gpvr[second_nibble as usize] != self.gpvr[third_nibble as usize],
+            ),
+            0xA => self.idxr = remaining_nibbles,
+            0xB => {
+                if cfg!(feature = "modern-jwo") {
+                    self.pc = remaining_nibbles + self.get_reg(second_nibble as usize) as u16
+                } else {
+                    self.pc = remaining_nibbles + self.get_reg(0) as u16
                 }
             }
-            0xA => self.idxr = remaining_nibbles,
-            0xB => self.pc = remaining_nibbles + self.get_reg(0) as u16,
             0xC => {
                 let rand = rand::random::<u8>();
                 self.set_reg(second_nibble as usize, rand & lsb as u8);
             }
-            0xD => todo!(),
-            0xE => todo!(),
+            0xD => {
+                let xcoord = (self.get_reg(second_nibble as usize) % 64) as usize;
+                let ycoord = (self.get_reg(third_nibble as usize) % 32) as usize;
+                let sprite_height = fourth_nibble;
+
+                *self.gpvr.last_mut().unwrap() = 0;
+
+                for y in 0..sprite_height {
+                    let sprite_byte = self.read_byte(self.idxr as usize + y as usize);
+
+                    for bit in (0..u8::BITS).rev() {
+                        let bit_val = (sprite_byte >> bit) & 0x1;
+
+                        if bit_val == 1 {
+                            if self.display.get_pixel(xcoord, ycoord) == 1 {
+                                *self.gpvr.last_mut().unwrap() = 1;
+                            }
+
+                            self.display.set_pixel(xcoord, ycoord);
+                        }
+                    }
+                }
+
+                self.rerender = true;
+            }
+            0xE => {}
             0xF => match (third_nibble, fourth_nibble) {
                 (0x0, 0x7) => self.set_reg(second_nibble as usize, self.dtr),
                 (0x0, 0xA) => todo!(),
                 (0x1, 0x5) => self.dtr = self.get_reg(second_nibble as usize),
                 (0x1, 0x8) => self.str = self.get_reg(second_nibble as usize),
-                (0x1, 0xE) => todo!(),
+                (0x1, 0xE) => {
+                    let regx_val = self.get_reg(second_nibble as usize);
+                    let res = self.idxr + regx_val as u16;
+
+                    if res >= MEM_SIZE as u16 {
+                        *self.gpvr.last_mut().unwrap() = 1;
+                    }
+                }
                 (0x2, 0x9) => todo!(),
                 (0x3, 0x3) => {
                     let num = self.get_reg(second_nibble as usize);
@@ -313,16 +365,35 @@ impl Cpu {
                     }
                 }
                 (0x5, 0x5) => {
-                    for reg in 0..=second_nibble {
-                        self.write_byte(self.idxr as usize, self.get_reg(reg as usize));
-                        self.idxr += 1;
+                    if cfg!(feature = "modern-ls") {
+                        let mut addr = self.idxr as usize;
+
+                        for reg in 0..=second_nibble {
+                            self.write_byte(addr, self.get_reg(reg as usize));
+                            addr += 1;
+                        }
+                    } else {
+                        for reg in 0..=second_nibble {
+                            self.write_byte(self.idxr as usize, self.get_reg(reg as usize));
+                            self.idxr += 1;
+                        }
                     }
                 }
                 (0x6, 0x5) => {
-                    for reg in 0..=second_nibble {
-                        let val = self.read_byte(self.idxr as usize);
-                        self.set_reg(reg as usize, val);
-                        self.idxr += 1;
+                    if cfg!(feature = "modern-ls") {
+                        let mut addr = self.idxr as usize;
+
+                        for reg in 0..=second_nibble {
+                            let val = self.read_byte(addr);
+                            self.set_reg(reg as usize, val);
+                            addr += 1;
+                        }
+                    } else {
+                        for reg in 0..=second_nibble {
+                            let val = self.read_byte(self.idxr as usize);
+                            self.set_reg(reg as usize, val);
+                            self.idxr += 1;
+                        }
                     }
                 }
                 _ => {}
@@ -331,18 +402,52 @@ impl Cpu {
         }
     }
 
+    /// Execute the program.
+    pub fn execute_program(&mut self, prog: &[u8]) {
+        // Load the program into memory.
+        self.load_program(prog);
+
+        loop {
+            let event = self.event_pump.wait_event();
+
+            match event {
+                Event::Quit { .. }
+                | Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
+                    ..
+                } => break,
+                // Event::KeyDown {
+                //     keycode: Some(Keycode::N),
+                //     ..
+                // } if step => {
+                //     let inst = self.next_inst();
+                //     self.execute_instruction(inst);
+                // }
+                _ => {}
+            }
+
+            let inst = self.next_inst();
+            self.execute_instruction(inst);
+
+            if self.rerender {
+                self.display.render();
+            }
+        }
+    }
+
     /// Dump CPU state at the end of execution.
     pub fn dump_state(&self) {
+        println!("\nPOST-EXECUTION CPU STATE");
+        println!("------------------------");
         println!("PROGRAM COUNTER: {:#X}", self.pc);
         println!("INDEX REGISTER:  {:#X}", self.idxr);
+        println!("DELAY TIMER:     {:#X}", self.dtr);
+        println!("SOUND TIMER:     {:#X}", self.str);
 
         println!("GENERAL PURPOSE REGISTERS:");
 
         for (reg, val) in self.gpvr.iter().enumerate() {
             println!("    V{reg:X}:  {val:#X}");
         }
-
-        println!("DELAY TIMER:    {:#X}", self.dtr);
-        println!("SOUND TIMER:    {:#X}", self.str);
     }
 }
