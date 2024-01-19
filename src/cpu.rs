@@ -403,9 +403,11 @@ impl Cpu {
     }
 
     /// Execute the program.
-    pub fn execute_program(&mut self, prog: &[u8]) {
+    pub fn execute_program(&mut self, prog: &[u8], step: bool) {
         // Load the program into memory.
         self.load_program(prog);
+
+        self.display.render();
 
         loop {
             let event = self.event_pump.wait_event();
@@ -416,18 +418,20 @@ impl Cpu {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => break,
-                // Event::KeyDown {
-                //     keycode: Some(Keycode::N),
-                //     ..
-                // } if step => {
-                //     let inst = self.next_inst();
-                //     self.execute_instruction(inst);
-                // }
+                Event::KeyDown {
+                    keycode: Some(Keycode::N),
+                    ..
+                } if step => {
+                    let inst = self.next_inst();
+                    self.execute_instruction(inst);
+                }
                 _ => {}
             }
 
-            let inst = self.next_inst();
-            self.execute_instruction(inst);
+            if !step {
+                let inst = self.next_inst();
+                self.execute_instruction(inst);
+            }
 
             if self.rerender {
                 self.display.render();

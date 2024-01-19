@@ -10,14 +10,18 @@ use std::{env, error::Error, fs::File, io::Read};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
-    // let step = args.contains(&String::from("--step"));
+    let step = args.contains(&String::from("--step"));
     let rom = args.get(0).expect("expected CHIP-8 ROM file");
 
     // Setup the sdl2 graphics.
     let sdl_context = sdl2::init()?;
     let window = sdl_context
         .video()?
-        .window("C8: CHIP-8 Emulator", WIDTH * SCALE, HEIGHT * SCALE)
+        .window(
+            "C8: CHIP-8 Emulator",
+            (WIDTH * SCALE) as u32,
+            (HEIGHT * SCALE) as u32,
+        )
         .position_centered()
         .resizable()
         .build()?;
@@ -33,7 +37,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     rom.read_to_end(&mut prog)?;
 
     // Execute the program.
-    cpu.execute_program(&prog);
+    cpu.execute_program(&prog, step);
 
     // Dump post-execution state.
     cpu.dump_state();
