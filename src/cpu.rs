@@ -1,6 +1,9 @@
-use crate::display::Display;
+use crate::{
+    display::{Display, HEIGHT, SCALE, WIDTH},
+    keyboard::Keyboard,
+};
 use arrayvec::ArrayVec;
-use sdl2::{event::Event, keyboard::Keycode, EventPump};
+use sdl2::{event::Event, keyboard::Scancode, EventPump};
 
 /// The commonly used font.
 const FONT: &[u8] = &[
@@ -57,6 +60,9 @@ pub struct Cpu {
     /// The display.
     display: Display,
 
+    /// The keyboard.
+    keyboard: Keyboard,
+
     /// The SDL event pump.
     event_pump: EventPump,
 
@@ -77,6 +83,7 @@ impl Cpu {
             str: 0,
             display,
             event_pump,
+            keyboard: Keyboard::new(),
             rerender: false,
         }
     }
@@ -238,7 +245,8 @@ impl Cpu {
                 self.gpvr[second_nibble as usize] = lsb as u8;
             }
             0x7 => {
-                self.gpvr[second_nibble as usize] += lsb as u8;
+                self.gpvr[second_nibble as usize] =
+                    self.gpvr[second_nibble as usize].saturating_add(lsb as u8)
             }
             0x8 => {
                 let regx = second_nibble as usize;
@@ -259,8 +267,10 @@ impl Cpu {
                         self.set_reg(regx, res);
                     }
                     0x4 => {
-                        let res = self.get_reg(regx) + self.get_reg(regy);
-                        // TODO: set carry.
+                        if self.get_reg(regx).checked_add(self.get_reg(regy)).is_none() {
+                            *self.gpvr.last_mut().unwrap() = 1;
+                        }
+                        let res = self.get_reg(regx).saturating_add(self.get_reg(regy));
                         self.set_reg(regx, res)
                     }
                     0x5 => {
@@ -271,10 +281,10 @@ impl Cpu {
                         if regx_val > regy_val {
                             *self.gpvr.last_mut().unwrap() = 1;
                         } else {
-                            todo!();
+                            *self.gpvr.last_mut().unwrap() = 0;
                         }
 
-                        self.set_reg(regx, regx_val - regy_val);
+                        self.set_reg(regx, regx_val.saturating_sub(regy_val));
                     }
                     0x6 => self.inst_shiftr(regx, regy),
                     0x7 => {
@@ -285,7 +295,7 @@ impl Cpu {
                         if regy_val > regx_val {
                             *self.gpvr.last_mut().unwrap() = 1;
                         } else {
-                            todo!();
+                            *self.gpvr.last_mut().unwrap() = 0;
                         }
 
                         self.set_reg(regx, regy_val - regx_val);
@@ -310,34 +320,80 @@ impl Cpu {
                 self.set_reg(second_nibble as usize, rand & lsb as u8);
             }
             0xD => {
-                let xcoord = (self.get_reg(second_nibble as usize) % 64) as usize;
-                let ycoord = (self.get_reg(third_nibble as usize) % 32) as usize;
-                let sprite_height = fourth_nibble;
+                let sprite_height = fourth_nibble as usize;
 
                 *self.gpvr.last_mut().unwrap() = 0;
 
                 for y in 0..sprite_height {
-                    let sprite_byte = self.read_byte(self.idxr as usize + y as usize);
+                    let sprite_byte = self.read_byte(self.idxr as usize + y);
+                    let ycoord = ((self.get_reg(third_nibble as usize) as usize + y as usize)
+                        % HEIGHT)
+                        * SCALE;
 
                     for bit in (0..u8::BITS).rev() {
+                        let xcoord = ((self.get_reg(second_nibble as usize) as usize
+                            + bit as usize)
+                            % WIDTH)
+                            * SCALE;
                         let bit_val = (sprite_byte >> bit) & 0x1;
 
                         if bit_val == 1 {
-                            if self.display.get_pixel(xcoord, ycoord) == 1 {
+                            if self.display.get_pixel(xcoord, ycoord) {
                                 *self.gpvr.last_mut().unwrap() = 1;
                             }
-
-                            self.display.set_pixel(xcoord, ycoord);
+                            self.display.toggle_pixel(xcoord, ycoord);
                         }
                     }
                 }
 
                 self.rerender = true;
             }
-            0xE => {}
+            0xE => match (third_nibble, fourth_nibble) {
+                (0x9, 0xE) => self.skip_inst_if(
+                    self.keyboard
+                        .is_key_pressed(self.get_reg(second_nibble as usize) as usize),
+                ),
+                (0xA, 0x1) => self.skip_inst_if(
+                    !self
+                        .keyboard
+                        .is_key_pressed(self.get_reg(second_nibble as usize) as usize),
+                ),
+                _ => {}
+            },
             0xF => match (third_nibble, fourth_nibble) {
                 (0x0, 0x7) => self.set_reg(second_nibble as usize, self.dtr),
-                (0x0, 0xA) => todo!(),
+                (0x0, 0xA) => loop {
+                    let event = self.event_pump.wait_event();
+
+                    if let Event::KeyDown {
+                        scancode: Some(scancode),
+                        ..
+                    } = event
+                    {
+                        self.keyboard.press_key(scancode);
+                        let scancode_hex = match scancode {
+                            Scancode::Num1 => 0,
+                            Scancode::Num2 => 1,
+                            Scancode::Num3 => 2,
+                            Scancode::Num4 => 3,
+                            Scancode::Q => 4,
+                            Scancode::W => 5,
+                            Scancode::E => 6,
+                            Scancode::R => 7,
+                            Scancode::A => 8,
+                            Scancode::S => 9,
+                            Scancode::D => 10,
+                            Scancode::F => 11,
+                            Scancode::Z => 12,
+                            Scancode::X => 13,
+                            Scancode::C => 14,
+                            Scancode::V => 15,
+                            _ => panic!("unrecognized key"),
+                        };
+                        self.set_reg(second_nibble as usize, scancode_hex);
+                        break;
+                    }
+                },
                 (0x1, 0x5) => self.dtr = self.get_reg(second_nibble as usize),
                 (0x1, 0x8) => self.str = self.get_reg(second_nibble as usize),
                 (0x1, 0xE) => {
@@ -348,7 +404,7 @@ impl Cpu {
                         *self.gpvr.last_mut().unwrap() = 1;
                     }
                 }
-                (0x2, 0x9) => todo!(),
+                (0x2, 0x9) => self.idxr = self.get_reg(second_nibble as usize) as u16,
                 (0x3, 0x3) => {
                     let num = self.get_reg(second_nibble as usize);
 
@@ -403,11 +459,14 @@ impl Cpu {
     }
 
     /// Execute the program.
-    pub fn execute_program(&mut self, prog: &[u8], step: bool) {
+    pub fn execute_program(&mut self, prog: &[u8], step: bool, no_display: bool) {
         // Load the program into memory.
         self.load_program(prog);
 
-        self.display.render();
+        if !no_display {
+            // Render the initial, unmainpulated display.
+            self.display.render();
+        }
 
         loop {
             let event = self.event_pump.wait_event();
@@ -415,16 +474,20 @@ impl Cpu {
             match event {
                 Event::Quit { .. }
                 | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
+                    scancode: Some(Scancode::Escape),
                     ..
                 } => break,
                 Event::KeyDown {
-                    keycode: Some(Keycode::N),
+                    scancode: Some(Scancode::N),
                     ..
                 } if step => {
                     let inst = self.next_inst();
                     self.execute_instruction(inst);
                 }
+                Event::KeyUp {
+                    scancode: Some(scancode),
+                    ..
+                } => self.keyboard.release_key(scancode),
                 _ => {}
             }
 
@@ -433,7 +496,7 @@ impl Cpu {
                 self.execute_instruction(inst);
             }
 
-            if self.rerender {
+            if self.rerender && !no_display {
                 self.display.render();
             }
         }

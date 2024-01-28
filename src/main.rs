@@ -3,6 +3,7 @@
 
 mod cpu;
 mod display;
+mod keyboard;
 
 use cpu::Cpu;
 use display::*;
@@ -11,6 +12,7 @@ use std::{env, error::Error, fs::File, io::Read};
 fn main() -> Result<(), Box<dyn Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     let step = args.contains(&String::from("--step"));
+    let no_display: bool = args.contains(&String::from("--no-display"));
     let rom = args.get(0).expect("expected CHIP-8 ROM file");
 
     // Setup the sdl2 graphics.
@@ -37,7 +39,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     rom.read_to_end(&mut prog)?;
 
     // Execute the program.
-    cpu.execute_program(&prog, step);
+    cpu.execute_program(&prog, step, no_display);
 
     // Dump post-execution state.
     cpu.dump_state();
