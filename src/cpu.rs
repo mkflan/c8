@@ -4,6 +4,7 @@ use crate::{
 };
 use arrayvec::ArrayVec;
 use sdl2::{event::Event, keyboard::Scancode, EventPump};
+use std::time::Duration;
 
 /// The commonly used font.
 const FONT: &[u8] = &[
@@ -116,6 +117,12 @@ impl Cpu {
         self.gpvr[register] = val;
     }
 
+    /// Set the value of a register with the result of the given function.
+    fn set_reg_with_func(&mut self, register: usize, f: impl Fn(u8) -> u8) {
+        let val = self.get_reg(register);
+        self.gpvr[register] = f(val);
+    }
+
     /// Push to the stack.
     fn push_stack(&mut self) {
         self.stack.push(self.pc);
@@ -139,12 +146,12 @@ impl Cpu {
         if cfg!(feature = "modern-shift") {
             let lsb = regx_val & 1;
             self.set_reg(regx, regx_val >> 1);
-            *self.gpvr.last_mut().unwrap() = lsb;
+            self.set_reg(0xF, lsb);
         } else {
             self.set_reg(regx, regy_val);
             let lsb = regy_val & 1;
             self.set_reg(regx, regy_val >> 1);
-            *self.gpvr.last_mut().unwrap() = lsb;
+            self.set_reg(0xF, lsb);
         }
     }
 
@@ -156,12 +163,12 @@ impl Cpu {
         if cfg!(feature = "modern-shift") {
             let msb = regx_val >> 7;
             self.set_reg(regx, regx_val << 1);
-            *self.gpvr.last_mut().unwrap() = msb;
+            self.set_reg(0xF, msb);
         } else {
             self.set_reg(regx, regy_val);
             let msb = regy_val >> 7;
             self.set_reg(regx, regy_val << 1);
-            *self.gpvr.last_mut().unwrap() = msb;
+            self.set_reg(0xF, msb);
         }
     }
 
@@ -191,7 +198,7 @@ impl Cpu {
     fn execute_instruction(&mut self, inst: u16) {
         self.rerender = false;
 
-        println!("inst: {:#X}", inst);
+        println!("inst: {inst:#X}");
         println!("PC: {:#X}", self.pc);
 
         // The highest nibble encodes the kind of instruction to be executed.
@@ -200,89 +207,69 @@ impl Cpu {
         // The remaining nibbles or combination of remaining nibbles can encode certain information such as
         // registers, immediate numbers, or memory addresses. Extract them all out here and the proper one
         // will be used inside the instruction.
-        let second_nibble = (inst >> 8) & 0xF;
-        let third_nibble = (inst >> 4) & 0xF;
-        let fourth_nibble = inst & 0xF;
-        let lsb = inst & 0xFF;
-        let remaining_nibbles = inst & 0xFFF;
-
-        // println!("    second nibble: {second_nibble:#X}");
-        // println!("    third nibble:  {third_nibble:#X}");
-        // println!("    fourth nibble: {fourth_nibble:#X}");
-        // println!("    lsb:           {lsb:#X}");
-        // println!("    remaning nbls: {remaining_nibbles:#X}");
+        let second_nibble = ((inst >> 8) & 0xF) as usize;
+        let third_nibble = ((inst >> 4) & 0xF) as usize;
+        let fourth_nibble = (inst & 0xF) as usize;
+        let lsb = (inst & 0xFF) as u8;
+        let remaining_nibbles = (inst & 0xFFF) as usize;
 
         match highest_nibble {
-            0x0 => {
-                match remaining_nibbles {
-                    // Clear the screen.
-                    0x0E0 => {
-                        self.display.clear();
-                        self.rerender = true;
-                    }
-
-                    // Return from subroutine.
-                    0x0EE => {
-                        self.pop_stack();
-                    }
-
-                    _ => {}
+            0x0 => match remaining_nibbles {
+                0x0E0 => {
+                    self.display.clear();
+                    self.rerender = true;
                 }
-            }
+
+                0x0EE => {
+                    self.pop_stack();
+                }
+
+                _ => panic!("invalid instruction: {inst:#X}"),
+            },
             0x1 => {
-                self.pc = remaining_nibbles;
+                self.pc = remaining_nibbles as u16;
             }
             0x2 => {
                 self.push_stack();
-                self.pc = remaining_nibbles;
+                self.pc = remaining_nibbles as u16;
             }
-            0x3 => self.skip_inst_if(self.gpvr[second_nibble as usize] == lsb as u8),
-            0x4 => self.skip_inst_if(self.gpvr[second_nibble as usize] != lsb as u8),
-            0x5 => self.skip_inst_if(
-                self.gpvr[second_nibble as usize] == self.gpvr[third_nibble as usize],
-            ),
-            0x6 => {
-                self.gpvr[second_nibble as usize] = lsb as u8;
-            }
-            0x7 => {
-                self.gpvr[second_nibble as usize] =
-                    self.gpvr[second_nibble as usize].saturating_add(lsb as u8)
-            }
+            0x3 => self.skip_inst_if(self.get_reg(second_nibble) == lsb),
+            0x4 => self.skip_inst_if(self.get_reg(second_nibble) != lsb),
+            0x5 => self.skip_inst_if(self.get_reg(second_nibble) == self.get_reg(third_nibble)),
+            0x6 => self.set_reg(second_nibble, lsb),
+            0x7 => self.set_reg_with_func(second_nibble, |val| val.wrapping_add(lsb)),
             0x8 => {
-                let regx = second_nibble as usize;
-                let regy = third_nibble as usize;
+                let regx = second_nibble;
+                let regy = third_nibble;
 
                 match fourth_nibble {
                     0x0 => self.set_reg(regx, self.get_reg(regy)),
                     0x1 => {
-                        let res = self.get_reg(regx) | self.get_reg(regy);
-                        self.set_reg(regx, res);
+                        let regy_val = self.get_reg(regy);
+                        self.set_reg_with_func(regx, |regx_val| regx_val | regy_val);
                     }
                     0x2 => {
-                        let res = self.get_reg(regx) & self.get_reg(regy);
-                        self.set_reg(regx, res);
+                        let regy_val = self.get_reg(regy);
+                        self.set_reg_with_func(regx, |regx_val| regx_val & regy_val);
                     }
                     0x3 => {
-                        let res = self.get_reg(regx) ^ self.get_reg(regy);
-                        self.set_reg(regx, res);
+                        let regy_val = self.get_reg(regy);
+                        self.set_reg_with_func(regx, |regx_val| regx_val ^ regy_val);
                     }
                     0x4 => {
-                        if self.get_reg(regx).checked_add(self.get_reg(regy)).is_none() {
-                            *self.gpvr.last_mut().unwrap() = 1;
+                        let res = self.get_reg(regx) as u16 + self.get_reg(regy) as u16;
+
+                        if res > 0xFF {
+                            self.set_reg(0xF, 1);
                         }
-                        let res = self.get_reg(regx).saturating_add(self.get_reg(regy));
-                        self.set_reg(regx, res)
+
+                        self.set_reg(regx, (res & 0xFF) as u8);
                     }
                     0x5 => {
                         let regx_val = self.get_reg(regx);
                         let regy_val = self.get_reg(regy);
 
-                        // Set the carry flag.
-                        if regx_val > regy_val {
-                            *self.gpvr.last_mut().unwrap() = 1;
-                        } else {
-                            *self.gpvr.last_mut().unwrap() = 0;
-                        }
+                        self.set_reg_with_func(0xF, |_| (regx_val > regy_val) as u8);
 
                         self.set_reg(regx, regx_val.saturating_sub(regy_val));
                     }
@@ -291,55 +278,44 @@ impl Cpu {
                         let regx_val = self.get_reg(regx);
                         let regy_val = self.get_reg(regy);
 
-                        // Set the carry flag.
-                        if regy_val > regx_val {
-                            *self.gpvr.last_mut().unwrap() = 1;
-                        } else {
-                            *self.gpvr.last_mut().unwrap() = 0;
-                        }
+                        self.set_reg_with_func(0xF, |_| (regx_val <= regy_val) as u8);
 
-                        self.set_reg(regx, regy_val - regx_val);
+                        self.set_reg(regx, regy_val.saturating_sub(regx_val));
                     }
                     0xE => self.inst_shiftl(regx, regy),
-                    _ => {}
+                    _ => panic!("invalid instruction: {inst:#X}"),
                 }
             }
-            0x9 => self.skip_inst_if(
-                self.gpvr[second_nibble as usize] != self.gpvr[third_nibble as usize],
-            ),
-            0xA => self.idxr = remaining_nibbles,
+            0x9 => self.skip_inst_if(self.get_reg(second_nibble) != self.get_reg(third_nibble)),
+            0xA => self.idxr = remaining_nibbles as u16,
             0xB => {
                 if cfg!(feature = "modern-jwo") {
-                    self.pc = remaining_nibbles + self.get_reg(second_nibble as usize) as u16
+                    self.pc = remaining_nibbles as u16 + self.get_reg(second_nibble) as u16;
                 } else {
-                    self.pc = remaining_nibbles + self.get_reg(0) as u16
+                    self.pc = remaining_nibbles as u16 + self.get_reg(0) as u16;
                 }
             }
             0xC => {
                 let rand = rand::random::<u8>();
-                self.set_reg(second_nibble as usize, rand & lsb as u8);
+                self.set_reg(second_nibble, rand & lsb);
             }
             0xD => {
-                let sprite_height = fourth_nibble as usize;
+                let sprite_height = fourth_nibble;
 
-                *self.gpvr.last_mut().unwrap() = 0;
+                self.set_reg(0xF, 0);
 
                 for y in 0..sprite_height {
                     let sprite_byte = self.read_byte(self.idxr as usize + y);
-                    let ycoord = ((self.get_reg(third_nibble as usize) as usize + y as usize)
-                        % HEIGHT)
-                        * SCALE;
+                    let ycoord = ((self.get_reg(third_nibble) as usize + y) % HEIGHT) * SCALE;
 
                     for bit in (0..u8::BITS).rev() {
-                        let xcoord = ((self.get_reg(second_nibble as usize) as usize
-                            + bit as usize)
-                            % WIDTH)
-                            * SCALE;
+                        let xcoord =
+                            ((self.get_reg(second_nibble) as usize + bit as usize) % WIDTH) * SCALE;
                         let bit_val = (sprite_byte >> bit) & 0x1;
 
                         if bit_val == 1 {
                             if self.display.get_pixel(xcoord, ycoord) {
-                                *self.gpvr.last_mut().unwrap() = 1;
+                                self.set_reg(0xF, 1);
                             }
                             self.display.toggle_pixel(xcoord, ycoord);
                         }
@@ -351,17 +327,17 @@ impl Cpu {
             0xE => match (third_nibble, fourth_nibble) {
                 (0x9, 0xE) => self.skip_inst_if(
                     self.keyboard
-                        .is_key_pressed(self.get_reg(second_nibble as usize) as usize),
+                        .is_key_pressed(self.get_reg(second_nibble) as usize),
                 ),
                 (0xA, 0x1) => self.skip_inst_if(
                     !self
                         .keyboard
-                        .is_key_pressed(self.get_reg(second_nibble as usize) as usize),
+                        .is_key_pressed(self.get_reg(second_nibble) as usize),
                 ),
-                _ => {}
+                _ => panic!("invalid instruction: {inst:#X}"),
             },
             0xF => match (third_nibble, fourth_nibble) {
-                (0x0, 0x7) => self.set_reg(second_nibble as usize, self.dtr),
+                (0x0, 0x7) => self.set_reg(second_nibble, self.dtr),
                 (0x0, 0xA) => loop {
                     let event = self.event_pump.wait_event();
 
@@ -371,6 +347,7 @@ impl Cpu {
                     } = event
                     {
                         self.keyboard.press_key(scancode);
+
                         let scancode_hex = match scancode {
                             Scancode::Num1 => 0,
                             Scancode::Num2 => 1,
@@ -388,49 +365,44 @@ impl Cpu {
                             Scancode::X => 13,
                             Scancode::C => 14,
                             Scancode::V => 15,
-                            _ => panic!("unrecognized key"),
+                            _ => continue,
                         };
-                        self.set_reg(second_nibble as usize, scancode_hex);
+
+                        self.set_reg(second_nibble, scancode_hex);
+
                         break;
                     }
                 },
-                (0x1, 0x5) => self.dtr = self.get_reg(second_nibble as usize),
-                (0x1, 0x8) => self.str = self.get_reg(second_nibble as usize),
+                (0x1, 0x5) => self.dtr = self.get_reg(second_nibble),
+                (0x1, 0x8) => self.str = self.get_reg(second_nibble),
                 (0x1, 0xE) => {
-                    let regx_val = self.get_reg(second_nibble as usize);
+                    let regx_val = self.get_reg(second_nibble);
                     let res = self.idxr + regx_val as u16;
 
                     if res >= MEM_SIZE as u16 {
-                        *self.gpvr.last_mut().unwrap() = 1;
+                        self.set_reg(0xF, 1);
                     }
                 }
-                (0x2, 0x9) => self.idxr = self.get_reg(second_nibble as usize) as u16,
+                (0x2, 0x9) => self.idxr = self.get_reg(second_nibble) as u16 * 5,
                 (0x3, 0x3) => {
-                    let num = self.get_reg(second_nibble as usize);
+                    let num = self.get_reg(second_nibble);
+                    let addr = self.idxr as usize;
 
-                    if let Some(log_base_ten) = num.checked_ilog10() {
-                        let dig_count = log_base_ten + 1;
-
-                        for pow in (0..dig_count).rev() {
-                            let digit = ((num as u32 / 10_u32.pow(pow)) % 10) as u8;
-                            self.write_byte(self.idxr as usize, digit);
-                            self.idxr += 1;
-                        }
-                    } else {
-                        self.write_byte(self.idxr as usize, num);
-                    }
+                    self.write_byte(addr, num / 100);
+                    self.write_byte(addr + 1, (num % 100) / 10);
+                    self.write_byte(addr + 2, (num % 100) % 10);
                 }
                 (0x5, 0x5) => {
                     if cfg!(feature = "modern-ls") {
                         let mut addr = self.idxr as usize;
 
                         for reg in 0..=second_nibble {
-                            self.write_byte(addr, self.get_reg(reg as usize));
+                            self.write_byte(addr, self.get_reg(reg));
                             addr += 1;
                         }
                     } else {
                         for reg in 0..=second_nibble {
-                            self.write_byte(self.idxr as usize, self.get_reg(reg as usize));
+                            self.write_byte(self.idxr as usize, self.get_reg(reg));
                             self.idxr += 1;
                         }
                     }
@@ -441,20 +413,28 @@ impl Cpu {
 
                         for reg in 0..=second_nibble {
                             let val = self.read_byte(addr);
-                            self.set_reg(reg as usize, val);
+                            self.set_reg(reg, val);
                             addr += 1;
                         }
                     } else {
                         for reg in 0..=second_nibble {
                             let val = self.read_byte(self.idxr as usize);
-                            self.set_reg(reg as usize, val);
+                            self.set_reg(reg, val);
                             self.idxr += 1;
                         }
                     }
                 }
-                _ => {}
+                _ => panic!("invalid instruction: {inst:#X}"),
             },
-            _ => panic!("CHIP-8 instructions only start with valid hex digits"),
+            _ => panic!("invalid instruction: {inst:#X}"),
+        }
+
+        if self.dtr > 0 {
+            self.dtr -= 1;
+        }
+
+        if self.str > 0 {
+            self.str -= 1;
         }
     }
 
@@ -499,6 +479,8 @@ impl Cpu {
             if self.rerender && !no_display {
                 self.display.render();
             }
+
+            std::thread::sleep(Duration::from_millis(2));
         }
     }
 

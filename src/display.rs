@@ -45,16 +45,10 @@ impl Display {
             )
             .expect("unable to create texture");
 
-        let pixel_data = self
-            .pixels
-            .map(|p| p.then_some(FG_COLOR).unwrap_or(BG_COLOR));
+        let pixel_data = self.pixels.map(|p| if p { FG_COLOR } else { BG_COLOR });
 
         texture
-            .update(
-                None,
-                &pixel_data,
-                WIDTH as usize * std::mem::size_of::<u8>(),
-            )
+            .update(None, &pixel_data, WIDTH * std::mem::size_of::<u8>())
             .expect("unable to update texture");
 
         self.clear();

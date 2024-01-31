@@ -1,4 +1,4 @@
-use sdl2::{event::Event, keyboard::Scancode};
+use sdl2::keyboard::Scancode;
 
 #[derive(Default)]
 pub struct Keyboard([bool; 16]);
@@ -27,7 +27,7 @@ impl Keyboard {
             Scancode::X => self.0[13] = true,
             Scancode::C => self.0[14] = true,
             Scancode::V => self.0[15] = true,
-            _ => panic!("unrecognized key"),
+            _ => (),
         }
     }
 
@@ -50,7 +50,7 @@ impl Keyboard {
             Scancode::X => self.0[13] = false,
             Scancode::C => self.0[14] = false,
             Scancode::V => self.0[15] = false,
-            _ => panic!("unrecognized key"),
+            _ => (),
         }
     }
 
