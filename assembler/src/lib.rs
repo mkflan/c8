@@ -10,12 +10,17 @@ use std::{error::Error, fs, path::PathBuf};
 // rsrt       00EE            return from subroutine
 // seq        3XNN/5XY0       skip next instruction if operands are equal
 // sneq       4XNN/9XY0       skip next instruction if operands are not equal
+// set                        set the value of a register
+//            6XNN            - set VX to immediate 8 bit number
+//            8XY0            - set VX to the value of VY
+//            FX07            - set VX to the value of the delay register
+
 // setv       6XNN/8XY0/FX07  set variable register (supported operands: immediate 8-bit number, variable register, delay register)
-// add        7XNN            add immediate value to value in register
-// bwor       8XY1            bitwise OR value of first register with value of second register
-// bwand      8XY2            bitwise AND value of first register with value of second register
-// bwxor      8XY3            bitwise XOR value of first register with value of second register
-// add        8XY4            add value of VY to VX (affests VF)
+// add        7XNN            add immediate value to value in VX
+// bwor       8XY1            bitwise OR VX's value with VY's value, storing the result in VX
+// bwand      8XY2            bitwise AND VX's value with VY's value, storing the result in VX
+// bwxor      8XY3            bitwise XOR VX's value with VY's value, storing the result in VX
+// add        8XY4            add value of VY to VX (affects VF)
 // sub        8XY5            subtract VY from VX, storing result in VX (affects VF)
 // subb       8XY7            subtract VX from VY, storing result in VX (affects VF)
 // sftr       8XY6            shift the value in VX right by one (affects VF)
