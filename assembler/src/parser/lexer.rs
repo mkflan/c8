@@ -2,7 +2,7 @@ use super::token::{
     Token,
     TokenKind::{self, *},
 };
-use std::{collections::HashMap, iter::Peekable, ops::Deref, sync::LazyLock};
+use std::{collections::HashMap, iter::Peekable, sync::LazyLock};
 
 static RESERVED_IDENTIFIERS: LazyLock<HashMap<&str, TokenKind>> = LazyLock::new(|| {
     use super::token::{Mnemonic::*, SpecialReg::*};
@@ -76,7 +76,7 @@ impl<I: Iterator<Item = char>> Lexer<I> {
         next
     }
 
-    /// Returns whether the next character is a character that meets the given predicate, consuming it if it is.
+    /// Returns whether the next character meets the given predicate, consuming it if it is.
     fn next_is(&mut self, pred: impl FnOnce(&char) -> bool) -> bool {
         self.peek()
             .is_some_and(pred)

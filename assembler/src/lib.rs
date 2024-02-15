@@ -1,5 +1,5 @@
 #![allow(unused, dead_code)]
-#![feature(lazy_cell)]
+#![feature(lazy_cell, let_chains)]
 #![warn(rust_2018_idioms, clippy::pedantic, clippy::nursery)]
 
 mod parser;
@@ -7,6 +7,7 @@ mod parser;
 use parser::{
     lexer::Lexer,
     token::{Token, TokenKind},
+    Parser,
 };
 use std::{error::Error, fs, path::PathBuf};
 
@@ -26,7 +27,10 @@ pub fn assemble(asm_path: PathBuf, outfile: PathBuf) -> Result<(), Box<dyn Error
         }
     }
 
-    dbg!(tokens);
+    let mut parser = Parser::new(tokens.into_iter());
+    let prog = std::iter::from_fn(|| parser.parse_instruction()).collect::<Vec<_>>();
+
+    dbg!(prog);
 
     Ok(())
 }
