@@ -1,4 +1,5 @@
-use std::ops::Range;
+use miette::SourceSpan;
+use std::{fmt, ops::Range};
 
 /// An instruction mnemonic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,12 +30,74 @@ pub enum Mnemonic {
     Ldm,
 }
 
-/// A special register name.
+impl fmt::Display for Mnemonic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use Mnemonic::*;
+
+        write!(
+            f,
+            "{}",
+            match self {
+                Cls => "cls",
+                Jmp => "jmp",
+                Csrt => "csrt",
+                Rsrt => "rsrt",
+                Seq => "seq",
+                Sneq => "sneq",
+                Set => "set",
+                Add => "add",
+                BwOr => "bwor",
+                BwAnd => "bwand",
+                BwXor => "bwxor",
+                Sub => "sub",
+                Subb => "subb",
+                Sftr => "sftr",
+                Sftl => "stfl",
+                Jmpwo => "jmpwo",
+                Rand => "rand",
+                Draw => "draw",
+                Skp => "skp",
+                Sknp => "sknp",
+                Gk => "gk",
+                Bcd => "bcd",
+                Stm => "stm",
+                Ldm => "ldm",
+            }
+        )
+    }
+}
+
+/// A register.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpecialReg {
+pub enum Register {
+    /// A variable register.
+    VarReg(u8),
+
+    /// The INDEX register.
     Index,
+
+    /// The DELAY register.
     Delay,
+
+    /// The SOUND register.
     Sound,
+}
+
+impl fmt::Display for Register {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use Register::*;
+
+        write!(
+            f,
+            "{}",
+            match self {
+                VarReg(r) => format!("V{r:X}"),
+                Index => "index".to_string(),
+                Delay => "delay".to_string(),
+                Sound => "sound".to_string(),
+            }
+        )
+    }
 }
 
 /// Valid tokens that the lexer will recognize.
@@ -43,17 +106,17 @@ pub enum TokenKind {
     /// An instruction mnemonic.
     Mnemonic(Mnemonic),
 
-    /// A special register name.
-    SpecialReg(SpecialReg),
+    /// A register.
+    Register(Register),
 
     /// An up to 12-bit immediate number.
     Immediate(u16),
 
-    /// A variable register.
-    VarReg(u8),
-
     /// A comma (,).
     Comma,
+
+    /// A character the lexer does not recognize.
+    Unrecognized,
 
     /// End of File
     EoF,
@@ -72,6 +135,12 @@ impl From<Range<usize>> for Span {
             start: range.start,
             end: range.end,
         }
+    }
+}
+
+impl From<Span> for SourceSpan {
+    fn from(span: Span) -> Self {
+        Self::from(span.start..span.end)
     }
 }
 

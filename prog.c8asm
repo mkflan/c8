@@ -1,0 +1,8 @@
+cls  
+set index, #22A
+set V0, #0C
+set V1, #08
+draw V0, V1, #F
+add V0, #09
+set index, #239
+draw V0, V1, #F

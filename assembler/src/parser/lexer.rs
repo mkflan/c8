@@ -1,11 +1,14 @@
+use crate::diagnostics::AssemblerDiagnostic;
+
 use super::token::{
-    Token,
+    Register::*,
+    Span, Token,
     TokenKind::{self, *},
 };
 use std::{collections::HashMap, iter::Peekable, sync::LazyLock};
 
 static RESERVED_IDENTIFIERS: LazyLock<HashMap<&str, TokenKind>> = LazyLock::new(|| {
-    use super::token::{Mnemonic::*, SpecialReg::*};
+    use super::token::Mnemonic::*;
 
     HashMap::from([
         ("cls", Mnemonic(Cls)),
@@ -32,9 +35,9 @@ static RESERVED_IDENTIFIERS: LazyLock<HashMap<&str, TokenKind>> = LazyLock::new(
         ("bcd", Mnemonic(Bcd)),
         ("stm", Mnemonic(Stm)),
         ("ldm", Mnemonic(Ldm)),
-        ("index", SpecialReg(Index)),
-        ("delay", SpecialReg(Delay)),
-        ("sound", SpecialReg(Sound)),
+        ("index", Register(Index)),
+        ("delay", Register(Delay)),
+        ("sound", Register(Sound)),
     ])
 });
 
@@ -53,7 +56,7 @@ impl<I: Iterator<Item = char>> Lexer<I> {
     pub fn new(source: I) -> Self {
         Self {
             source: source.peekable(),
-            cursor: (1, 1),
+            cursor: (1, 0),
             most_recently_consumed: None,
         }
     }
@@ -87,13 +90,12 @@ impl<I: Iterator<Item = char>> Lexer<I> {
 
     /// Advance while a predicate is true.
     fn advance_while(&mut self, pred: impl Fn(&char) -> bool) {
-        while self.peek().is_some_and(&pred) {
-            self.advance();
-        }
+        while self.next_is(&pred) {}
     }
 
     /// Lex a reserved identifier, whether it be an instruction mnemonic or special register name.
-    fn lex_reserved_ident(&mut self, first: char) -> Option<Token> {
+    fn lex_reserved_ident(&mut self, first: char) -> (Token, Option<AssemblerDiagnostic>) {
+        let mut err = None;
         let mut ident = String::from(first);
 
         while self.next_is(|c| c.is_alphabetic()) {
@@ -101,15 +103,17 @@ impl<I: Iterator<Item = char>> Lexer<I> {
         }
 
         let Some(&tok_kind) = (*RESERVED_IDENTIFIERS).get(ident.as_str()) else {
-            println!("Unrecognized identifier: {ident}");
-            return None;
+            let tok = self.create_token(Unrecognized, ident.len());
+            err = Some(AssemblerDiagnostic::UnrecognizedIdent(tok.span));
+            return (tok, err);
         };
 
-        Some(self.create_token(tok_kind, ident.len()))
+        (self.create_token(tok_kind, ident.len()), err)
     }
 
     /// Lex an immediate hexadecimal numerical value.
-    fn lex_immediate_hexnumber(&mut self) -> Option<Token> {
+    fn lex_immediate_hexnumber(&mut self) -> (Token, Option<AssemblerDiagnostic>) {
+        let mut err = None;
         let num = std::iter::from_fn(|| {
             self.next_is(char::is_ascii_hexdigit)
                 .then_some(self.most_recently_consumed)
@@ -118,8 +122,18 @@ impl<I: Iterator<Item = char>> Lexer<I> {
         .collect::<String>();
         let imm_len = num.len() + 1; // Account for leading #.
 
-        let num = u16::from_str_radix(&num, 16).ok()?;
-        Some(self.create_token(Immediate(num), imm_len))
+        if let Ok(num) = u16::from_str_radix(&num, 16) {
+            (self.create_token(Immediate(num), imm_len), None)
+        } else {
+            let span = Span::from(self.cursor.1 - imm_len + 1..imm_len);
+            err = Some(AssemblerDiagnostic::InvalidImmediate(span));
+            (self.create_token(Unrecognized, imm_len), err)
+        }
+
+        // let num = u16::from_str_radix(&num, 16)
+        //     .ok().
+        //     .expect("unable to parser immediate number to hex");
+        // (self.create_token(Immediate(num), imm_len), None)
     }
 
     // TODO:
@@ -128,13 +142,13 @@ impl<I: Iterator<Item = char>> Lexer<I> {
     // - error on missing argument in instruction
     // - error on invalid instruction mnemonic
     // - error on invalid register name
-    pub fn lex_token(&mut self) -> Option<Token> {
+    pub fn lex_token(&mut self) -> (Token, Option<AssemblerDiagnostic>) {
         let Some(ch) = self.advance() else {
-            return Some(self.create_token(EoF, 0));
+            return (self.create_token(EoF, 0), None);
         };
 
         match ch {
-            ',' => Some(self.create_token(Comma, 1)),
+            ',' => (self.create_token(Comma, 1), None),
 
             // Comments
             ';' => {
@@ -150,16 +164,17 @@ impl<I: Iterator<Item = char>> Lexer<I> {
                 if (ch == 'V' || ch == 'v') && self.next_is(char::is_ascii_hexdigit) {
                     let reg = self
                         .most_recently_consumed
-                        .map(|c| c.to_digit(16).unwrap() as u8)?;
-                    return Some(self.create_token(VarReg(reg), 2));
+                        .map(|c| c.to_digit(16).unwrap() as u8)
+                        .expect("unable to parse to hex");
+                    return (self.create_token(Register(VarReg(reg)), 2), None);
                 } else {
                     self.lex_reserved_ident(ch)
                 }
             }
 
             _ => {
-                println!("Unrecognized character: {ch}");
-                None
+                let tok = self.create_token(Unrecognized, 1);
+                (tok, Some(AssemblerDiagnostic::UnrecognizedChar(tok.span)))
             }
         }
     }

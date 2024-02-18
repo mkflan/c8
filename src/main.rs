@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = Cli::parse();
 
     match args.command {
-        Commands::Assemble { asm_path, outfile } => assembler::assemble(asm_path, outfile),
+        Commands::Assemble { asm_path, outfile } => Ok(assembler::assemble(asm_path, outfile)?),
         Commands::Emulate {
             prog_path,
             step,

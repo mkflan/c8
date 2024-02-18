@@ -1,27 +1,58 @@
 pub mod lexer;
 pub mod token;
 
-use std::iter::Peekable;
-use token::{Mnemonic, Token, TokenKind};
+use std::{fmt, iter::Peekable};
+use token::{Mnemonic, Register, Token, TokenKind};
 
 /// An instruction operand.
-#[derive(Debug)]
-enum Operand {
+#[derive(Debug, Clone, Copy)]
+pub enum Operand {
     /// A register.
-    Register(TokenKind),
+    Register(Register),
 
     /// An up to 12-bit immediate number.
     Immediate(u16),
 }
 
+impl fmt::Display for Operand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use Operand::*;
+
+        write!(
+            f,
+            "{}",
+            match self {
+                Register(r) => r.to_string(),
+                Immediate(imm) => format!("{imm:#04X}"),
+            }
+        )
+    }
+}
+
 /// An instruction, with its mnemonic and operands.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Instruction {
     /// The instruction mnemonic.
-    mnemonic: Mnemonic,
+    pub mnemonic: Mnemonic,
 
     /// The instruction operands.
-    operands: Vec<Operand>,
+    pub operands: Vec<Operand>,
+}
+
+impl fmt::Display for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{mnemonic} {operands}",
+            mnemonic = self.mnemonic,
+            operands = self
+                .operands
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
+    }
 }
 
 pub struct Parser<I: Iterator<Item = Token>> {
@@ -75,8 +106,8 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                 let kind = self.most_recently_consumed.unwrap().kind;
                 if let TokenKind::Immediate(imm) = kind {
                     operands.push(Operand::Immediate(imm));
-                } else {
-                    operands.push(Operand::Register(kind));
+                } else if let TokenKind::Register(reg) = kind {
+                    operands.push(Operand::Register(reg));
                 }
             }
 
