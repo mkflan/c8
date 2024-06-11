@@ -75,10 +75,10 @@ impl Cpu {
     /// Create a new CPU initialized with default values.
     pub fn new(display: Display, event_pump: EventPump) -> Self {
         Self {
-            mem: std::array::from_fn(|_| 0),
+            mem: [0; MEM_SIZE],
             pc: 0,
             idxr: 0,
-            gpvr: std::array::from_fn(|_| 0),
+            gpvr: [0; 16],
             stack: ArrayVec::new(),
             dtr: 0,
             str: 0,
@@ -207,14 +207,14 @@ impl Cpu {
         // The remaining nibbles or combination of remaining nibbles can encode certain information such as
         // registers, immediate numbers, or memory addresses. Extract them all out here and the proper one
         // will be used inside the instruction.
-        let second_nibble = ((inst >> 8) & 0xF) as usize;
-        let third_nibble = ((inst >> 4) & 0xF) as usize;
-        let fourth_nibble = (inst & 0xF) as usize;
-        let lsb = (inst & 0xFF) as u8;
-        let remaining_nibbles = (inst & 0xFFF) as usize;
+        let x = ((inst >> 8) & 0xF) as usize;
+        let y = ((inst >> 4) & 0xF) as usize;
+        let n = (inst & 0xF) as usize;
+        let nn = (inst & 0xFF) as u8;
+        let nnn = (inst & 0xFFF) as usize;
 
         match highest_nibble {
-            0x0 => match remaining_nibbles {
+            0x0 => match nnn {
                 0x0E0 => {
                     self.display.clear();
                     self.rerender = true;
@@ -227,22 +227,22 @@ impl Cpu {
                 _ => panic!("invalid instruction: {inst:#X}"),
             },
             0x1 => {
-                self.pc = remaining_nibbles as u16;
+                self.pc = nnn as u16;
             }
             0x2 => {
                 self.push_stack();
-                self.pc = remaining_nibbles as u16;
+                self.pc = nnn as u16;
             }
-            0x3 => self.skip_inst_if(self.get_reg(second_nibble) == lsb),
-            0x4 => self.skip_inst_if(self.get_reg(second_nibble) != lsb),
-            0x5 => self.skip_inst_if(self.get_reg(second_nibble) == self.get_reg(third_nibble)),
-            0x6 => self.set_reg(second_nibble, lsb),
-            0x7 => self.set_reg_with_func(second_nibble, |val| val.wrapping_add(lsb)),
+            0x3 => self.skip_inst_if(self.get_reg(x) == nn),
+            0x4 => self.skip_inst_if(self.get_reg(x) != nn),
+            0x5 => self.skip_inst_if(self.get_reg(x) == self.get_reg(y)),
+            0x6 => self.set_reg(x, nn),
+            0x7 => self.set_reg_with_func(x, |val| val.wrapping_add(nn)),
             0x8 => {
-                let regx = second_nibble;
-                let regy = third_nibble;
+                let regx = x;
+                let regy = y;
 
-                match fourth_nibble {
+                match n {
                     0x0 => self.set_reg(regx, self.get_reg(regy)),
                     0x1 => {
                         let regy_val = self.get_reg(regy);
@@ -286,58 +286,55 @@ impl Cpu {
                     _ => panic!("invalid instruction: {inst:#X}"),
                 }
             }
-            0x9 => self.skip_inst_if(self.get_reg(second_nibble) != self.get_reg(third_nibble)),
-            0xA => self.idxr = remaining_nibbles as u16,
+            0x9 => self.skip_inst_if(self.get_reg(x) != self.get_reg(y)),
+            0xA => self.idxr = nnn as u16,
             0xB => {
                 if cfg!(feature = "modern-jwo") {
-                    self.pc = remaining_nibbles as u16 + self.get_reg(second_nibble) as u16;
+                    self.pc = nnn as u16 + self.get_reg(x) as u16;
                 } else {
-                    self.pc = remaining_nibbles as u16 + self.get_reg(0) as u16;
+                    self.pc = nnn as u16 + self.get_reg(0) as u16;
                 }
             }
             0xC => {
                 let rand = rand::random::<u8>();
-                self.set_reg(second_nibble, rand & lsb);
+                self.set_reg(x, rand & nn);
             }
             0xD => {
-                let sprite_height = fourth_nibble;
+                let sprite_height = n;
+                let xcoord = self.get_reg(x) as usize % HEIGHT * SCALE;
+                let ycoord = self.get_reg(y) as usize % WIDTH * SCALE;
 
                 self.set_reg(0xF, 0);
 
-                for y in 0..sprite_height {
-                    let sprite_byte = self.read_byte(self.idxr as usize + y);
-                    let ycoord = ((self.get_reg(third_nibble) as usize + y) % HEIGHT) * SCALE;
+                for row in 0..sprite_height {
+                    let sprite_byte = self.read_byte(self.idxr as usize + row);
 
                     for bit in (0..u8::BITS).rev() {
-                        let xcoord =
-                            ((self.get_reg(second_nibble) as usize + bit as usize) % WIDTH) * SCALE;
-                        let bit_val = (sprite_byte >> bit) & 0x1;
+                        let sprite_pixel = (sprite_byte >> bit) & 0x1;
 
-                        if bit_val == 1 {
+                        if sprite_pixel == 1 {
                             if self.display.get_pixel(xcoord, ycoord) {
                                 self.set_reg(0xF, 1);
                             }
-                            self.display.toggle_pixel(xcoord, ycoord);
                         }
+
+                        self.display.toggle_pixel(xcoord, ycoord);
                     }
                 }
 
                 self.rerender = true;
             }
-            0xE => match (third_nibble, fourth_nibble) {
-                (0x9, 0xE) => self.skip_inst_if(
-                    self.keyboard
-                        .is_key_pressed(self.get_reg(second_nibble) as usize),
-                ),
-                (0xA, 0x1) => self.skip_inst_if(
-                    !self
-                        .keyboard
-                        .is_key_pressed(self.get_reg(second_nibble) as usize),
-                ),
+            0xE => match (y, n) {
+                (0x9, 0xE) => {
+                    self.skip_inst_if(self.keyboard.is_key_pressed(self.get_reg(x) as usize))
+                }
+                (0xA, 0x1) => {
+                    self.skip_inst_if(!self.keyboard.is_key_pressed(self.get_reg(x) as usize))
+                }
                 _ => panic!("invalid instruction: {inst:#X}"),
             },
-            0xF => match (third_nibble, fourth_nibble) {
-                (0x0, 0x7) => self.set_reg(second_nibble, self.dtr),
+            0xF => match (y, n) {
+                (0x0, 0x7) => self.set_reg(x, self.dtr),
                 (0x0, 0xA) => loop {
                     let event = self.event_pump.wait_event();
 
@@ -368,24 +365,24 @@ impl Cpu {
                             _ => continue,
                         };
 
-                        self.set_reg(second_nibble, scancode_hex);
+                        self.set_reg(x, scancode_hex);
 
                         break;
                     }
                 },
-                (0x1, 0x5) => self.dtr = self.get_reg(second_nibble),
-                (0x1, 0x8) => self.str = self.get_reg(second_nibble),
+                (0x1, 0x5) => self.dtr = self.get_reg(x),
+                (0x1, 0x8) => self.str = self.get_reg(x),
                 (0x1, 0xE) => {
-                    let regx_val = self.get_reg(second_nibble);
+                    let regx_val = self.get_reg(x);
                     let res = self.idxr + regx_val as u16;
 
                     if res >= MEM_SIZE as u16 {
                         self.set_reg(0xF, 1);
                     }
                 }
-                (0x2, 0x9) => self.idxr = self.get_reg(second_nibble) as u16 * 5,
+                (0x2, 0x9) => self.idxr = self.get_reg(x) as u16 * 5,
                 (0x3, 0x3) => {
-                    let num = self.get_reg(second_nibble);
+                    let num = self.get_reg(x);
                     let addr = self.idxr as usize;
 
                     self.write_byte(addr, num / 100);
@@ -396,12 +393,12 @@ impl Cpu {
                     if cfg!(feature = "modern-ls") {
                         let mut addr = self.idxr as usize;
 
-                        for reg in 0..=second_nibble {
+                        for reg in 0..=x {
                             self.write_byte(addr, self.get_reg(reg));
                             addr += 1;
                         }
                     } else {
-                        for reg in 0..=second_nibble {
+                        for reg in 0..=x {
                             self.write_byte(self.idxr as usize, self.get_reg(reg));
                             self.idxr += 1;
                         }
@@ -411,13 +408,13 @@ impl Cpu {
                     if cfg!(feature = "modern-ls") {
                         let mut addr = self.idxr as usize;
 
-                        for reg in 0..=second_nibble {
+                        for reg in 0..=x {
                             let val = self.read_byte(addr);
                             self.set_reg(reg, val);
                             addr += 1;
                         }
                     } else {
-                        for reg in 0..=second_nibble {
+                        for reg in 0..=x {
                             let val = self.read_byte(self.idxr as usize);
                             self.set_reg(reg, val);
                             self.idxr += 1;
@@ -444,12 +441,13 @@ impl Cpu {
         self.load_program(prog);
 
         if !no_display {
-            // Render the initial, unmainpulated display.
+            // Render the initial, unmanipulated display.
             self.display.render();
         }
 
         loop {
             let event = self.event_pump.wait_event();
+            let inst = self.next_inst();
 
             match event {
                 Event::Quit { .. }
@@ -461,9 +459,12 @@ impl Cpu {
                     scancode: Some(Scancode::N),
                     ..
                 } if step => {
-                    let inst = self.next_inst();
                     self.execute_instruction(inst);
                 }
+                Event::KeyDown {
+                    scancode: Some(scancode),
+                    ..
+                } => self.keyboard.press_key(scancode),
                 Event::KeyUp {
                     scancode: Some(scancode),
                     ..
@@ -472,7 +473,6 @@ impl Cpu {
             }
 
             if !step {
-                let inst = self.next_inst();
                 self.execute_instruction(inst);
             }
 
