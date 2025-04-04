@@ -1,10 +1,7 @@
-use crate::{
-    display::{Display, HEIGHT, SCALE, WIDTH},
-    keyboard::Keyboard,
-};
+use crate::keyboard::Keyboard;
+use crate::{BG_COLOR, DISPLAY_HEIGHT, DISPLAY_WIDTH, FG_COLOR};
 use arrayvec::ArrayVec;
 use sdl2::{event::Event, keyboard::Scancode, EventPump};
-use std::time::Duration;
 
 /// The commonly used font.
 const FONT: &[u8] = &[
@@ -58,22 +55,14 @@ pub struct Cpu {
     /// The sound timer register.
     str: u8,
 
-    /// The display.
-    display: Display,
-
-    /// The keyboard.
-    keyboard: Keyboard,
-
-    /// The SDL event pump.
-    event_pump: EventPump,
-
-    /// A flag controlling whether the display should be rerendered after an instruction.
-    rerender: bool,
+    pub display: [bool; DISPLAY_HEIGHT * DISPLAY_WIDTH],
+    pub rerender: bool,
+    // pub terminate: bool,
 }
 
 impl Cpu {
     /// Create a new CPU initialized with default values.
-    pub fn new(display: Display, event_pump: EventPump) -> Self {
+    pub fn new() -> Self {
         Self {
             mem: [0; MEM_SIZE],
             pc: 0,
@@ -82,9 +71,7 @@ impl Cpu {
             stack: ArrayVec::new(),
             dtr: 0,
             str: 0,
-            display,
-            event_pump,
-            keyboard: Keyboard::new(),
+            display: [false; DISPLAY_HEIGHT * DISPLAY_WIDTH],
             rerender: false,
         }
     }
@@ -173,14 +160,14 @@ impl Cpu {
     }
 
     /// Fetch the next instruction.
-    fn next_inst(&mut self) -> u16 {
+    pub fn next_inst(&mut self) -> u16 {
         let inst = self.read_word(self.pc as usize);
         self.pc += 2;
         inst
     }
 
     /// Load a program into memory and prepare for execution.
-    fn load_program(&mut self, prog: &[u8]) {
+    pub fn load_program(&mut self, prog: &[u8]) {
         // Load the font into memory.
         for (idx, &byte) in FONT.iter().enumerate() {
             self.mem[FONT_START + idx] = byte;
@@ -195,9 +182,7 @@ impl Cpu {
     }
 
     /// Decode and execute an instruction.
-    fn execute_instruction(&mut self, inst: u16) {
-        self.rerender = false;
-
+    pub fn execute_instruction(&mut self, inst: u16) {
         println!("inst: {inst:#X}");
         println!("PC: {:#X}", self.pc);
 
@@ -216,7 +201,6 @@ impl Cpu {
         match highest_nibble {
             0x0 => match nnn {
                 0x0E0 => {
-                    self.display.clear();
                     self.rerender = true;
                 }
 
@@ -300,75 +284,75 @@ impl Cpu {
                 self.set_reg(x, rand & nn);
             }
             0xD => {
-                let sprite_height = n;
-                let xcoord = self.get_reg(x) as usize % HEIGHT * SCALE;
-                let ycoord = self.get_reg(y) as usize % WIDTH * SCALE;
+                //     let sprite_height = n;
+                //     let xcoord = self.get_reg(x) as usize % HEIGHT * SCALE;
+                //     let ycoord = self.get_reg(y) as usize % WIDTH * SCALE;
 
-                self.set_reg(0xF, 0);
+                //     self.set_reg(0xF, 0);
 
-                for row in 0..sprite_height {
-                    let sprite_byte = self.read_byte(self.idxr as usize + row);
+                //     for row in 0..sprite_height {
+                //         let sprite_byte = self.read_byte(self.idxr as usize + row);
 
-                    for bit in (0..u8::BITS).rev() {
-                        let sprite_pixel = (sprite_byte >> bit) & 0x1;
+                //         for bit in (0..u8::BITS).rev() {
+                //             let sprite_pixel = (sprite_byte >> bit) & 0x1;
 
-                        if sprite_pixel == 1 {
-                            if self.display.get_pixel(xcoord, ycoord) {
-                                self.set_reg(0xF, 1);
-                            }
-                        }
+                //             if sprite_pixel == 1 {
+                //                 if self.display.get_pixel(xcoord, ycoord) {
+                //                     self.set_reg(0xF, 1);
+                //                 }
+                //             }
 
-                        self.display.toggle_pixel(xcoord, ycoord);
-                    }
-                }
+                //             self.display.toggle_pixel(xcoord, ycoord);
+                //         }
+                //     }
 
-                self.rerender = true;
+                //     self.rerender = true;
             }
             0xE => match (y, n) {
                 (0x9, 0xE) => {
-                    self.skip_inst_if(self.keyboard.is_key_pressed(self.get_reg(x) as usize))
+                    // self.skip_inst_if(self.keyboard.is_key_pressed(self.get_reg(x) as usize))
                 }
                 (0xA, 0x1) => {
-                    self.skip_inst_if(!self.keyboard.is_key_pressed(self.get_reg(x) as usize))
+                    // self.skip_inst_if(!self.keyboard.is_key_pressed(self.get_reg(x) as usize))
                 }
                 _ => panic!("invalid instruction: {inst:#X}"),
             },
             0xF => match (y, n) {
                 (0x0, 0x7) => self.set_reg(x, self.dtr),
                 (0x0, 0xA) => loop {
-                    let event = self.event_pump.wait_event();
+                    //     let event = self.event_pump.wait_event();
 
-                    if let Event::KeyDown {
-                        scancode: Some(scancode),
-                        ..
-                    } = event
-                    {
-                        self.keyboard.press_key(scancode);
+                    //     if let Event::KeyDown {
+                    //         scancode: Some(scancode),
+                    //         ..
+                    //     } = event
+                    //     {
+                    //         self.keyboard.press_key(scancode);
 
-                        let scancode_hex = match scancode {
-                            Scancode::Num1 => 0,
-                            Scancode::Num2 => 1,
-                            Scancode::Num3 => 2,
-                            Scancode::Num4 => 3,
-                            Scancode::Q => 4,
-                            Scancode::W => 5,
-                            Scancode::E => 6,
-                            Scancode::R => 7,
-                            Scancode::A => 8,
-                            Scancode::S => 9,
-                            Scancode::D => 10,
-                            Scancode::F => 11,
-                            Scancode::Z => 12,
-                            Scancode::X => 13,
-                            Scancode::C => 14,
-                            Scancode::V => 15,
-                            _ => continue,
-                        };
+                    //         let scancode_hex = match scancode {
+                    //             Scancode::Num1 => 0,
+                    //             Scancode::Num2 => 1,
+                    //             Scancode::Num3 => 2,
+                    //             Scancode::Num4 => 3,
+                    //             Scancode::Q => 4,
+                    //             Scancode::W => 5,
+                    //             Scancode::E => 6,
+                    //             Scancode::R => 7,
+                    //             Scancode::A => 8,
+                    //             Scancode::S => 9,
+                    //             Scancode::D => 10,
+                    //             Scancode::F => 11,
+                    //             Scancode::Z => 12,
+                    //             Scancode::X => 13,
+                    //             Scancode::C => 14,
+                    //             Scancode::V => 15,
+                    //             _ => continue,
+                    //         };
 
-                        self.set_reg(x, scancode_hex);
+                    //         self.set_reg(x, scancode_hex);
 
-                        break;
-                    }
+                    //         break;
+                    //     }
                 },
                 (0x1, 0x5) => self.dtr = self.get_reg(x),
                 (0x1, 0x8) => self.str = self.get_reg(x),
@@ -436,53 +420,53 @@ impl Cpu {
     }
 
     /// Execute the program.
-    pub fn execute_program(&mut self, prog: &[u8], step: bool, no_display: bool) {
-        // Load the program into memory.
-        self.load_program(prog);
+    // pub fn execute_program(&mut self, prog: &[u8], step: bool, no_display: bool) {
+    //     // Load the program into memory.
+    //     self.load_program(prog);
 
-        if !no_display {
-            // Render the initial, unmanipulated display.
-            self.display.render();
-        }
+    //     if !no_display {
+    //         // Render the initial, unmanipulated display.
+    //         self.display.render();
+    //     }
 
-        loop {
-            let event = self.event_pump.wait_event();
-            let inst = self.next_inst();
+    //     loop {
+    //         let event = self.event_pump.wait_event();
+    //         let inst = self.next_inst();
 
-            match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    scancode: Some(Scancode::Escape),
-                    ..
-                } => break,
-                Event::KeyDown {
-                    scancode: Some(Scancode::N),
-                    ..
-                } if step => {
-                    self.execute_instruction(inst);
-                }
-                Event::KeyDown {
-                    scancode: Some(scancode),
-                    ..
-                } => self.keyboard.press_key(scancode),
-                Event::KeyUp {
-                    scancode: Some(scancode),
-                    ..
-                } => self.keyboard.release_key(scancode),
-                _ => {}
-            }
+    //         match event {
+    //             Event::Quit { .. }
+    //             | Event::KeyDown {
+    //                 scancode: Some(Scancode::Escape),
+    //                 ..
+    //             } => break,
+    //             Event::KeyDown {
+    //                 scancode: Some(Scancode::N),
+    //                 ..
+    //             } if step => {
+    //                 self.execute_instruction(inst);
+    //             }
+    //             Event::KeyDown {
+    //                 scancode: Some(scancode),
+    //                 ..
+    //             } => self.keyboard.press_key(scancode),
+    //             Event::KeyUp {
+    //                 scancode: Some(scancode),
+    //                 ..
+    //             } => self.keyboard.release_key(scancode),
+    //             _ => {}
+    //         }
 
-            if !step {
-                self.execute_instruction(inst);
-            }
+    //         if !step {
+    //             self.execute_instruction(inst);
+    //         }
 
-            if self.rerender && !no_display {
-                self.display.render();
-            }
+    //         if self.rerender && !no_display {
+    //             self.display.render();
+    //         }
 
-            std::thread::sleep(Duration::from_millis(2));
-        }
-    }
+    //         std::thread::sleep(Duration::from_millis(2));
+    //     }
+    // }
 
     /// Dump CPU state at the end of execution.
     pub fn dump_state(&self) {
