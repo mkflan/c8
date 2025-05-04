@@ -1,5 +1,5 @@
 use crate::keyboard::Keyboard;
-use crate::{BG_COLOR, DISPLAY_HEIGHT, DISPLAY_WIDTH, FG_COLOR};
+use crate::{BG_COLOR, DISPLAY_HEIGHT, DISPLAY_SCALE, DISPLAY_WIDTH, FG_COLOR};
 use arrayvec::ArrayVec;
 use sdl2::{event::Event, keyboard::Scancode, EventPump};
 
@@ -76,6 +76,20 @@ impl Cpu {
         }
     }
 
+    /// Load a program into memory and prepare for execution.
+    pub fn load_program(&mut self, prog: &[u8]) {
+        // Load the font into memory.
+        for (idx, &byte) in FONT.iter().enumerate() {
+            self.mem[FONT_START + idx] = byte;
+        }
+
+        // Load the program into memory.
+        for (idx, &byte) in prog.iter().enumerate() {
+            self.mem[PROG_START + idx] = byte;
+        }
+
+        self.pc = PROG_START as u16;
+    }
     /// Read a byte from memory.
     fn read_byte(&self, addr: usize) -> u8 {
         self.mem[addr]
@@ -166,26 +180,8 @@ impl Cpu {
         inst
     }
 
-    /// Load a program into memory and prepare for execution.
-    pub fn load_program(&mut self, prog: &[u8]) {
-        // Load the font into memory.
-        for (idx, &byte) in FONT.iter().enumerate() {
-            self.mem[FONT_START + idx] = byte;
-        }
-
-        // Load the program into memory.
-        for (idx, &byte) in prog.iter().enumerate() {
-            self.mem[PROG_START + idx] = byte;
-        }
-
-        self.pc = PROG_START as u16;
-    }
-
     /// Decode and execute an instruction.
     pub fn execute_instruction(&mut self, inst: u16) {
-        println!("inst: {inst:#X}");
-        println!("PC: {:#X}", self.pc);
-
         // The highest nibble encodes the kind of instruction to be executed.
         let highest_nibble = inst >> 12;
 
@@ -198,9 +194,22 @@ impl Cpu {
         let nn = (inst & 0xFF) as u8;
         let nnn = (inst & 0xFFF) as usize;
 
+        println!("instruction: {inst:#04X}");
+        println!("  PC:   {:#X}", self.pc);
+        println!("  HI:   {highest_nibble:#X}");
+        println!("  X:    {x:#X}");
+        println!("  Y:    {y:#X}");
+        println!("  N:    {n:#X}");
+        println!("  NN:   {nn:#X}");
+        println!("  NNN:  {nnn:#X}");
+
         match highest_nibble {
             0x0 => match nnn {
                 0x0E0 => {
+                    for idx in 0..self.display.len() {
+                        self.display[idx] = false;
+                    }
+
                     self.rerender = true;
                 }
 
@@ -284,29 +293,32 @@ impl Cpu {
                 self.set_reg(x, rand & nn);
             }
             0xD => {
-                //     let sprite_height = n;
-                //     let xcoord = self.get_reg(x) as usize % HEIGHT * SCALE;
-                //     let ycoord = self.get_reg(y) as usize % WIDTH * SCALE;
+                let sprite_height = n;
+                let x = self.get_reg(x) as usize % DISPLAY_WIDTH * DISPLAY_SCALE;
+                let y = self.get_reg(y) as usize % DISPLAY_HEIGHT * DISPLAY_SCALE;
 
-                //     self.set_reg(0xF, 0);
+                self.set_reg(0xF, 0);
 
-                //     for row in 0..sprite_height {
-                //         let sprite_byte = self.read_byte(self.idxr as usize + row);
+                for row in 0..sprite_height {
+                    let sprite_byte = self.read_byte(self.idxr as usize + row);
 
-                //         for bit in (0..u8::BITS).rev() {
-                //             let sprite_pixel = (sprite_byte >> bit) & 0x1;
+                    for bit in (0..u8::BITS).rev() {
+                        let sprite_pixel = (sprite_byte >> bit) & 0x1;
 
-                //             if sprite_pixel == 1 {
-                //                 if self.display.get_pixel(xcoord, ycoord) {
-                //                     self.set_reg(0xF, 1);
-                //                 }
-                //             }
+                        if sprite_pixel == 1 {
+                            if self.display
+                                [(y / DISPLAY_SCALE) * DISPLAY_WIDTH + (x / DISPLAY_SCALE)]
+                            {
+                                self.set_reg(0xF, 1);
+                            }
+                        } else {
+                            self.display
+                                [(y / DISPLAY_SCALE) * DISPLAY_WIDTH + (x / DISPLAY_SCALE)] = true;
+                        }
+                    }
+                }
 
-                //             self.display.toggle_pixel(xcoord, ycoord);
-                //         }
-                //     }
-
-                //     self.rerender = true;
+                self.rerender = true;
             }
             0xE => match (y, n) {
                 (0x9, 0xE) => {

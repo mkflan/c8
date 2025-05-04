@@ -68,8 +68,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         .video()?
         .window(
             "C8: CHIP-8 Emulator",
-            DISPLAY_WIDTH as u32 * 10,
-            DISPLAY_HEIGHT as u32 * 10,
+            DISPLAY_WIDTH as u32 * DISPLAY_SCALE as u32,
+            DISPLAY_HEIGHT as u32 * DISPLAY_SCALE as u32,
         )
         .build()?;
     let mut canvas = window.into_canvas().build()?;
@@ -79,6 +79,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut rom = File::open(args.prog_path)?;
     let mut prog = Vec::new();
     rom.read_to_end(&mut prog)?;
+
+    println!("{rom:#?}");
 
     let mut cpu = Cpu::new();
 
